@@ -809,6 +809,8 @@ sds sdscatfmt(sds s, char const *fmt, ...) {
  *
  * Output will be just "HelloWorld".
  */
+//从s的左边、右边移除 连续出现在cset中的字符,比如:s=aabc cset=a,那么结果就是 bc;
+//比如上面的例子,从s的左边遍历,A出现在 'Aa. :'中,所以全部移除; .出现在 'Aa. :'中,也移除; :现在 'Aa. :'中,也移除; ' '出现在 'Aa. :'中,也移除;
 sds sdstrim(sds s, const char *cset) {
     char *end, *sp, *ep;
     size_t len;

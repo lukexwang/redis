@@ -445,12 +445,17 @@ void trackingInvalidateKeysOnFlush(int async) {
  * certain keys. In workloads where there are a lot of reads, but keys are
  * hardly modified, the amount of information we have to remember server side
  * could be a lot, with the number of keys being totally not bound.
+ * 强制redis记住有关哪个client可能有哪些key信息. 在大量读取 但 几乎没有 修改 场景中,
+ * server侧需要记住的信息量可能很大，key的数量完全不受限制.
  *
  * So Redis allows the user to configure a maximum number of keys for the
  * invalidation table. This function makes sure that we don't go over the
  * specified fill rate: if we are over, we can just evict information about
  * a random key, and send invalidation messages to clients like if the key was
- * modified. */
+ * modified. 
+ * 所以Redis允许为 invalidation table 配置最大key数量. 这个函数确保我们不会超过指定的填充率(fill rate):
+ * 如果超过了,则可以随机驱逐一个key, 并将key的失效信息发送给clients.
+ */
 void trackingLimitUsedSlots(void) {
     static unsigned int timeout_counter = 0;
     if (TrackingTable == NULL) return;
@@ -463,10 +468,12 @@ void trackingLimitUsedSlots(void) {
 
     /* We have to invalidate a few keys to reach the limit again. The effort
      * we do here is proportional to the number of times we entered this
-     * function and found that we are still over the limit. */
+     * function and found that we are still over the limit.
+     * effort 代表最大遍历次数
+     */
     int effort = 100 * (timeout_counter+1);
 
-    /* We just remove one key after another by using a random walk. */
+    /* We just remove one key after another by using a random walk. 随机删除一个有一个key,知道达到阈值 */
     raxIterator ri;
     raxStart(&ri,TrackingTable);
     while(effort > 0) {

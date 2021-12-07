@@ -72,15 +72,21 @@ static list *bio_jobs[BIO_NUM_OPS];
  * objects shared with the background thread. The main thread will just wait
  * that there are no longer jobs of this type to be executed before performing
  * the sensible operation. This data is also useful for reporting. */
+// 用于保存每种OP类型待处理JOB数
+// 这允许我们导出 bioPendingJobsOfType() API,当主线程想要执行一些操作，这些操作涉及 与 后台线程共享的对象时候。
+// 主线程只需保证不再有这种类型的Job待执行  即可。
 static unsigned long long bio_pending[BIO_NUM_OPS];
 
 /* This structure represents a background Job. It is only used locally to this
  * file as the API does not expose the internals at all. */
+// 该struct代表一个后台job
 struct bio_job {
     time_t time; /* Time at which the job was created. */
     /* Job specific arguments.*/
     int fd; /* Fd for file based background jobs */
+    //该函数用于释放参数列表的空间
     lazy_free_fn *free_fn; /* Function that will free the provided arguments */
+    //传给free_fn的参数列表
     void *free_args[]; /* List of arguments to be passed to the free function */
 };
 
@@ -91,6 +97,7 @@ void *bioProcessBackgroundJobs(void *arg);
 #define REDIS_THREAD_STACK_SIZE (1024*1024*4)
 
 /* Initialize the background system, spawning the thread. */
+//初始化 后台任务线程:bio_jobs,并为每种后台任务类型 启动一个线程去循环处理, 
 void bioInit(void) {
     pthread_attr_t attr;
     pthread_t thread;
@@ -116,6 +123,8 @@ void bioInit(void) {
     /* Ready to spawn our threads. We use the single argument the thread
      * function accepts in order to pass the job ID the thread is
      * responsible of. */
+    //将后台任务线程运行起来,每种BIO_TYPE对应一个后台任务线程
+    //每个后台任务线程都执行 bioProcessBackgroundJobs() 函数,参数是type,根据type,我们就可以从list bio_jobs[type]中获取到对应的任务
     for (j = 0; j < BIO_NUM_OPS; j++) {
         void *arg = (void*)(unsigned long) j;
         if (pthread_create(&thread,&attr,bioProcessBackgroundJobs,arg) != 0) {
@@ -164,6 +173,7 @@ void bioCreateFsyncJob(int fd) {
     bioSubmitJob(BIO_AOF_FSYNC, job);
 }
 
+//后台任务处理,如aof_fsync、lazy_free等
 void *bioProcessBackgroundJobs(void *arg) {
     struct bio_job *job;
     unsigned long type = (unsigned long) arg;
@@ -176,6 +186,7 @@ void *bioProcessBackgroundJobs(void *arg) {
         return NULL;
     }
 
+    //检查 后台任务类型
     switch (type) {
     case BIO_CLOSE_FILE:
         redis_set_thread_title("bio_close_file");
@@ -188,11 +199,11 @@ void *bioProcessBackgroundJobs(void *arg) {
         break;
     }
 
-    redisSetCpuAffinity(server.bio_cpulist);
+    redisSetCpuAffinity(server.bio_cpulist); //线程绑定指定cpu
 
     makeThreadKillable();
 
-    pthread_mutex_lock(&bio_mutex[type]);
+    pthread_mutex_lock(&bio_mutex[type]); //获取锁
     /* Block SIGALRM so we are sure that only the main thread will
      * receive the watchdog signal. */
     sigemptyset(&sigset);
@@ -210,7 +221,7 @@ void *bioProcessBackgroundJobs(void *arg) {
             continue;
         }
         /* Pop the job from the queue. */
-        ln = listFirst(bio_jobs[type]);
+        ln = listFirst(bio_jobs[type]); //获取该类型(BIO_CLOSE_FILE、BIO_AOF_FSYNC、BIO_LAZY_FREE)的第一个任务
         job = ln->value;
         /* It is now possible to unlock the background system as we know have
          * a stand alone job structure to process.*/
@@ -238,6 +249,7 @@ void *bioProcessBackgroundJobs(void *arg) {
                 atomicSet(server.aof_bio_fsync_status,C_OK);
             }
         } else if (type == BIO_LAZY_FREE) {
+            //释放这些key的内存
             job->free_fn(job->free_args);
         } else {
             serverPanic("Wrong job type in bioProcessBackgroundJobs().");
@@ -255,7 +267,7 @@ void *bioProcessBackgroundJobs(void *arg) {
     }
 }
 
-/* Return the number of pending jobs of the specified type. */
+/* Return the number of pending jobs of the specified type. 返回指定类型 待执行的任务数 */
 unsigned long long bioPendingJobsOfType(int type) {
     unsigned long long val;
     pthread_mutex_lock(&bio_mutex[type]);

@@ -525,6 +525,8 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
 
 /* Accept a connection and also make sure the socket is non-blocking, and CLOEXEC.
  * returns the new socket FD, or -1 on error. */
+// s 为server监听的 文件描述符,当前有客户端请求 连接到 s上
+// 该函数负责接受连接请求(accept),并获取客户端 cfd(该连接的文件描述符) cip#cport
 int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
     int fd;
     struct sockaddr_storage sa;

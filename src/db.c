@@ -411,17 +411,22 @@ long long emptyDbStructure(redisDb *dbarray, int dbnum, int async,
 /* Remove all keys from all the databases in a Redis server.
  * If callback is given the function is called from time to time to
  * signal that work is in progress.
+ * 删除redis server中所有databases下的所有key
  *
  * The dbnum can be -1 if all the DBs should be flushed, or the specified
  * DB number if we want to flush only a single Redis database number.
+ * 如果dbnum=-1,则所有dbs需要被flush. 如果我们只想flush单个db,则 dbnum指定具体db的数值;
  *
  * Flags are be EMPTYDB_NO_FLAGS if no special flags are specified or
  * EMPTYDB_ASYNC if we want the memory to be freed in a different thread
  * and the function to return ASAP.
+ * 如果没有指定特殊标识,则 EMPTYDB_NO_FLAGS 会被指定. 如果我们希望其他线程来释放内存,则指定EMPTYDB_ASYNC标识
  *
  * On success the function returns the number of keys removed from the
  * database(s). Otherwise -1 is returned in the specific case the
- * DB number is out of range, and errno is set to EINVAL. */
+ * DB number is out of range, and errno is set to EINVAL. 
+ * 成功时,函数返回清理的key个数. 否则返回-1,
+ */
 long long emptyDb(int dbnum, int flags, void(callback)(void*)) {
     int async = (flags & EMPTYDB_ASYNC);
     RedisModuleFlushInfoV1 fi = {REDISMODULE_FLUSHINFO_VERSION,!async,dbnum};
@@ -1423,7 +1428,9 @@ void setExpire(client *c, redisDb *db, robj *key, long long when) {
 }
 
 /* Return the expire time of the specified key, or -1 if no expire
- * is associated with this key (i.e. the key is non volatile) */
+ * is associated with this key (i.e. the key is non volatile) 
+ * 返回指定key的过期时间,如果该key没有过期时间 or 该key不存在,返回-1
+ */
 long long getExpire(redisDb *db, robj *key) {
     dictEntry *de;
 
@@ -1975,7 +1982,9 @@ unsigned int getKeysInSlot(unsigned int hashslot, robj **keys, unsigned int coun
 }
 
 /* Remove all the keys in the specified hash slot.
- * The number of removed items is returned. */
+ * The number of removed items is returned. 
+ * 删除指定slot中的所有key(这个slot我们负责的),返回删除的key个数
+ */
 unsigned int delKeysInSlot(unsigned int hashslot) {
     raxIterator iter;
     int j = 0;

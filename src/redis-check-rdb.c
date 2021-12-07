@@ -222,14 +222,18 @@ int redis_check_rdb(char *rdbfilename, FILE *fp) {
             rdbstate.doing = RDB_CHECK_DOING_READ_EXPIRE;
             /* EXPIRETIME: load an expire associated with the next key
              * to load. Note that after loading an expire we need to
-             * load the actual type, and continue. */
+             * load the actual type, and continue. 
+             * EXPIRETIME: 加载与下一个key关联的expire时间. 注意,加载完expire后,就会加载实际的type 并继续
+             */
             expiretime = rdbLoadTime(&rdb);
             expiretime *= 1000;
             if (rioGetReadError(&rdb)) goto eoferr;
             continue; /* Read next opcode. */
         } else if (type == RDB_OPCODE_EXPIRETIME_MS) {
             /* EXPIRETIME_MS: milliseconds precision expire times introduced
-             * with RDB v3. Like EXPIRETIME but no with more precision. */
+             * with RDB v3. Like EXPIRETIME but no with more precision. 
+             * EXPIRETIME_MS: RDB v3中毫秒过期时间,和 EXPIRETIME 一样不过更精确
+             */
             rdbstate.doing = RDB_CHECK_DOING_READ_EXPIRE;
             expiretime = rdbLoadMillisecondTime(&rdb, rdbver);
             if (rioGetReadError(&rdb)) goto eoferr;
@@ -256,7 +260,9 @@ int redis_check_rdb(char *rdbfilename, FILE *fp) {
             continue; /* Read type again. */
         } else if (type == RDB_OPCODE_RESIZEDB) {
             /* RESIZEDB: Hint about the size of the keys in the currently
-             * selected data base, in order to avoid useless rehashing. */
+             * selected data base, in order to avoid useless rehashing. 
+             * RESIZEDB: 当前选中database中key的大小,以避免无用的rehashing
+             */
             uint64_t db_size, expires_size;
             rdbstate.doing = RDB_CHECK_DOING_READ_LEN;
             if ((db_size = rdbLoadLen(&rdb,NULL)) == RDB_LENERR)
@@ -311,6 +317,36 @@ int redis_check_rdb(char *rdbfilename, FILE *fp) {
         /* Read value */
         rdbstate.doing = RDB_CHECK_DOING_READ_OBJECT_VALUE;
         if ((val = rdbLoadObject(type,&rdb,key->ptr,selected_dbid)) == NULL) goto eoferr;
+
+        sds line=sdsempty();
+        line=sdscatprintf(line,"db:%d ",selected_dbid);
+        char *kType="";
+        if (val->type == OBJ_STRING){
+            kType="string";
+        }else if(val->type == OBJ_LIST){
+            kType="list";
+        }else if(val->type == OBJ_SET){
+            kType="set";
+        }else if(val->type == OBJ_ZSET){
+            kType="zset";
+        }else if(val->type == OBJ_HASH){
+            kType="hash";
+        }else if(val->type == OBJ_STREAM){
+            kType="stream";
+        }
+        line=sdscatprintf(line,"type:%s ",kType);
+        if(key->encoding == OBJ_ENCODING_INT){
+           //参考rewrite aof的写法
+           char lbuf[32];
+           unsigned int llen;
+           llen=ll2string(lbuf,sizeof(lbuf),(long)key->ptr);
+           line=sdscatlen(line,lbuf,llen);
+        }else if(sdsEncodedObject(key)) {
+           line=sdscatlen(line,key->ptr,sdslen(key->ptr));
+        }
+        printf("%s\n",line);
+        sdsfree(line);
+        
         /* Check if the key already expired. */
         if (expiretime != -1 && expiretime < now)
             rdbstate.already_expired++;

@@ -34,6 +34,7 @@
 /* Check if this blocked client timedout (does nothing if the client is
  * not blocked right now). If so send a reply, unblock it, and return 1.
  * Otherwise 0 is returned and no operation is performed. */
+//如果一个blocked的client 超时时间已过,则向其发送回复,并unlockClient,而后return 1
 int checkBlockedClientTimeout(client *c, mstime_t now) {
     if (c->flags & CLIENT_BLOCKED &&
         c->bpop.timeout != 0
@@ -51,7 +52,10 @@ int checkBlockedClientTimeout(client *c, mstime_t now) {
 /* Check for timeouts. Returns non-zero if the client was terminated.
  * The function gets the current time in milliseconds as argument since
  * it gets called multiple times in a loop, so calling gettimeofday() for
- * each iteration would be costly without any actual gain. */
+ * each iteration would be costly without any actual gain. 
+ * 检查client 超时,如果client被终止则返回非0.
+ * 该函数使用 (毫秒)的当前时间做参数.
+ */
 int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
     time_t now = now_ms/1000;
 
@@ -68,7 +72,9 @@ int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
         return 1;
     } else if (c->flags & CLIENT_BLOCKED) {
         /* Cluster: handle unblock & redirect of clients blocked
-         * into keys no longer served by this server. */
+         * into keys no longer served by this server. 
+         * cluster: 处理blocked clients的unblock 和 redirect,该client不再由该server提供服务.
+         */
         if (server.cluster_enabled) {
             if (clusterRedirectBlockedClientIfNeeded(c))
                 unblockClient(c);
@@ -133,7 +139,12 @@ void removeClientFromTimeoutTable(client *c) {
 
 /* This function is called in beforeSleep() in order to unblock clients
  * that are waiting in blocking operations with a timeout set. */
+//beforeSleep()将调用该函数, 以便于 unblock 那些 block时间已到 的客户端
+//如果这些客户端的超时时间已过,则unlock
+//- 将这些client从 server.clients_timeout_table中删除;
+//- 同时将client存入 server.unblocked_clients 中,server在事件循环中会去处理 unblocked_clients 中的请求;
 void handleBlockedClientsTimeout(void) {
+    //如果clients_timeout_table为空,则代表没有 阻塞的client
     if (raxSize(server.clients_timeout_table) == 0) return;
     uint64_t now = mstime();
     raxIterator ri;

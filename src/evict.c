@@ -487,6 +487,7 @@ static unsigned long evictionTimeLimitUs() {
 
 /* Check that memory usage is within the current "maxmemory" limit.  If over
  * "maxmemory", attempt to free memory by evicting data (if it's safe to do so).
+ * 检查当前内存使用是否已达到 maxmemory 限制. 如果超过maxmemory,则尝试驱逐key释放内存.
  *
  * It's possible for Redis to suddenly be significantly over the "maxmemory"
  * setting.  This can happen if there is a large allocation (like a hash table

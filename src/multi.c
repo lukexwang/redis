@@ -55,6 +55,7 @@ void freeClientMultiState(client *c) {
 }
 
 /* Add a new command into the MULTI commands queue */
+//添加新命令到 MULTI 命令队列中
 void queueMultiCommand(client *c) {
     multiCmd *mc;
     int j;
@@ -80,6 +81,7 @@ void queueMultiCommand(client *c) {
     c->mstate.cmd_inv_flags |= ~c->cmd->flags;
 }
 
+//比如执行 discard 命令
 void discardTransaction(client *c) {
     freeClientMultiState(c);
     initClientMultiState(c);
@@ -88,23 +90,29 @@ void discardTransaction(client *c) {
 }
 
 /* Flag the transaction as DIRTY_EXEC so that EXEC will fail.
- * Should be called every time there is an error while queueing a command. */
+ * Should be called every time there is an error while queueing a command. 
+ * 将事务打上 DIRTY_EXEC 标记 以便 执行 EXEC 命令时，事务会失败.
+ * 事务中，将命令入队时 如果发生错误，都需要执行该函数
+ */
 void flagTransaction(client *c) {
     if (c->flags & CLIENT_MULTI)
         c->flags |= CLIENT_DIRTY_EXEC;
 }
 
 void multiCommand(client *c) {
+    // 不能在事务中嵌套事务
     if (c->flags & CLIENT_MULTI) {
         addReplyError(c,"MULTI calls can not be nested");
         return;
     }
+    // 打开事务 FLAG
     c->flags |= CLIENT_MULTI;
 
     addReply(c,shared.ok);
 }
 
 void discardCommand(client *c) {
+    // 不能在客户端未进行事务状态下 执行DISCARD
     if (!(c->flags & CLIENT_MULTI)) {
         addReplyError(c,"DISCARD without MULTI");
         return;
@@ -126,7 +134,9 @@ void afterPropagateExec() {
 }
 
 /* Send a MULTI command to all the slaves and AOF file. Check the execCommand
- * implementation for more information. */
+ * implementation for more information. 
+ * 向所有附属节点和 AOF 文件传播 MULTI 命令。
+ */
 void execCommandPropagateMulti(int dbid) {
     beforePropagateMulti();
     propagate(server.multiCommand,dbid,&shared.multi,1,
@@ -143,7 +153,10 @@ void execCommandPropagateExec(int dbid) {
  * The transaction is always aborted with -EXECABORT so that the client knows
  * the server exited the multi state, but the actual reason for the abort is
  * included too.
- * Note: 'error' may or may not end with \r\n. see addReplyErrorFormat. */
+ * Note: 'error' may or may not end with \r\n. see addReplyErrorFormat. 
+ * 终止事务,并返回 特定error 信息
+ * 事务被终止后总是 伴随着 -EXECABORT 信息, 以便client知道server 退出了MULTI状态. 同时返回给client的信息中 实际终止的原因 也会包含.
+ */
 void execCommandAbort(client *c, sds error) {
     discardTransaction(c);
 
@@ -156,6 +169,7 @@ void execCommandAbort(client *c, sds error) {
     replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
 }
 
+//执行EXEC 命令
 void execCommand(client *c) {
     int j;
     robj **orig_argv;
@@ -173,12 +187,14 @@ void execCommand(client *c) {
         c->flags |= (CLIENT_DIRTY_CAS);
     }
 
-    /* Check if we need to abort the EXEC because:
-     * 1) Some WATCHed key was touched.
-     * 2) There was a previous error while queueing commands.
-     * A failed EXEC in the first case returns a multi bulk nil object
+    /* Check if we need to abort the EXEC because: 检查我们是否需要abort EXEC
+     * 1) Some WATCHed key was touched. 存在watch的key被更新了?
+     * 2) There was a previous error while queueing commands. 将命令加入队列时发生了错误
+     * A failed EXEC in the first case returns a multi bulk nil object 
      * (technically it is not an error but a special behavior), while
-     * in the second an EXECABORT error is returned. */
+     * in the second an EXECABORT error is returned.
+     * 第一种情况下失败的 EXEC 返回一个多块 nil 对象（从技术上讲，它不是错误而是一种特殊行为），而在第二种情况下返回 EXECABORT 错误。
+     */
     if (c->flags & (CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC)) {
         addReply(c, c->flags & CLIENT_DIRTY_EXEC ? shared.execaborterr :
                                                    shared.nullarray[c->resp]);
@@ -188,10 +204,11 @@ void execCommand(client *c) {
 
     uint64_t old_flags = c->flags;
 
-    /* we do not want to allow blocking commands inside multi */
+    /* we do not want to allow blocking commands inside multi. 事务中拒绝会阻塞的命令 */
     c->flags |= CLIENT_DENY_BLOCKING;
 
     /* Exec all the queued commands */
+    // 已经可以保证安全性了，取消客户端对所有键的监视
     unwatchAllKeys(c); /* Unwatch ASAP otherwise we'll waste CPU cycles */
 
     server.in_exec = 1;
@@ -200,7 +217,10 @@ void execCommand(client *c) {
     orig_argc = c->argc;
     orig_cmd = c->cmd;
     addReplyArrayLen(c,c->mstate.count);
+    // 执行事务中的命令
     for (j = 0; j < c->mstate.count; j++) {
+        // 因为 Redis 的命令必须在客户端的上下文中执行
+        // 所以要将事务队列中的命令、命令参数等设置给客户端
         c->argc = c->mstate.commands[j].argc;
         c->argv = c->mstate.commands[j].argv;
         c->cmd = c->mstate.commands[j].cmd;
@@ -233,11 +253,16 @@ void execCommand(client *c) {
                 "This command is no longer allowed for the "
                 "following reason: %s", reason);
         } else {
+            //执行命令
             call(c,server.loading ? CMD_CALL_NONE : CMD_CALL_FULL);
             serverAssert((c->flags & CLIENT_BLOCKED) == 0);
         }
 
         /* Commands may alter argc/argv, restore mstate. */
+        // 因为执行后命令、命令参数可能会被改变
+        // 比如 SPOP 会被改写为 SREM
+        // 所以这里需要更新事务队列中的命令和参数
+        // 确保附属节点和 AOF 的数据一致性
         c->mstate.commands[j].argc = c->argc;
         c->mstate.commands[j].argv = c->argv;
         c->mstate.commands[j].cmd = c->cmd;
@@ -247,13 +272,14 @@ void execCommand(client *c) {
     if (!(old_flags & CLIENT_DENY_BLOCKING))
         c->flags &= ~CLIENT_DENY_BLOCKING;
 
+    // 还原命令、命令参数
     c->argv = orig_argv;
     c->argc = orig_argc;
     c->cmd = orig_cmd;
-    discardTransaction(c);
+    discardTransaction(c);// 清理事务状态
 
     /* Make sure the EXEC command will be propagated as well if MULTI
-     * was already propagated. */
+     * was already propagated. 确保EXEC命令也会传播,既然 MULTI 已经传播到 slave or monitor client了 */
     if (server.propagate_in_transaction) {
         int is_master = server.masterhost == NULL;
         server.dirty++;

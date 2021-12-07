@@ -66,7 +66,7 @@ void closeChildInfoPipe(void) {
     }
 }
 
-/* Send save data to parent. */
+/* Send save data to parent. 将child的一些信息发送给parent */
 void sendChildInfoGeneric(childInfoType info_type, size_t keys, double progress, char *pname) {
     if (server.child_info_pipe[1] == -1) return;
 
@@ -79,7 +79,11 @@ void sendChildInfoGeneric(childInfoType info_type, size_t keys, double progress,
     /* When called to report current info, we need to throttle down CoW updates as they
      * can be very expensive. To do that, we measure the time it takes to get a reading
      * and schedule the next reading to happen not before time*CHILD_COW_COST_FACTOR
-     * passes. */
+     * passes.
+     * cow:是 copy on write的简写;
+     * 更新cow是非常昂贵的,所以我们计算cow所需的时间保存到 cow_update_cost 中
+     * 并确保下次计算cow 时间至少间隔 cow_update_cost * CHILD_COW_DUTY_CYCLE
+     */
 
     monotime now = getMonotonicUs();
     if (info_type != CHILD_INFO_TYPE_CURRENT_INFO ||
@@ -129,7 +133,10 @@ void updateChildInfo(childInfoType information_type, size_t cow, monotime cow_up
 /* Read child info data from the pipe.
  * if complete data read into the buffer, 
  * data is stored into *buffer, and returns 1.
- * otherwise, the partial data is left in the buffer, waiting for the next read, and returns 0. */
+ * otherwise, the partial data is left in the buffer, waiting for the next read, and returns 0.
+ * 从pipe中读取 child info 数据.如果完整的数据被读取进 buffer 中,返回1
+ * 否则 部分数据残留在buffer中,等待下次读取.
+ */
 int readChildInfo(childInfoType *information_type, size_t *cow, monotime *cow_updated, size_t *keys, double* progress) {
     /* We are using here a static buffer in combination with the server.child_info_nread to handle short reads */
     static child_info_data buffer;

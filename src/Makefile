@@ -13,8 +13,8 @@
 # Just use 'make dep', but this is only needed by developers.
 
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
-uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
-uname_M := $(shell sh -c 'uname -m 2>/dev/null || echo not')
+uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not') #值: Linux
+uname_M := $(shell sh -c 'uname -m 2>/dev/null || echo not') #值: x86_64
 OPTIMIZATION?=-O2
 DEPENDENCY_TARGETS=hiredis linenoise lua hdr_histogram
 NODEPS:=clean distclean
@@ -44,6 +44,8 @@ else
 	STD+=-std=c99
 endif
 
+$(info STD=$(STD))
+
 PREFIX?=/usr/local
 INSTALL_BIN=$(PREFIX)/bin
 INSTALL=install
@@ -60,10 +62,10 @@ endif
 endif
 
 # To get ARM stack traces if Redis crashes we need a special C flag.
-ifneq (,$(filter aarch64 armv,$(uname_M)))
+ifneq (,$(filter aarch64 armv,$(uname_M))) #以aarch64 armv模式过滤$(uname_M)字符串中的单词,保留符合模式aarch64 或 armv的单词
         CFLAGS+=-funwind-tables
 else
-ifneq (,$(findstring armv,$(uname_M)))
+ifneq (,$(findstring armv,$(uname_M))) #在$(uname_M)中查找armv,如果 找到则返回armv
         CFLAGS+=-funwind-tables
 endif
 endif
@@ -267,6 +269,10 @@ REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
 REDIS_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS)
 REDIS_INSTALL=$(QUIET_INSTALL)$(INSTALL)
 
+$(info REDIS_CC=$(REDIS_CC))
+$(info REDIS_LD=$(REDIS_LD))
+$(info REDIS_INSTALL=$(REDIS_INSTALL))
+
 CCCOLOR="\033[34m"
 LINKCOLOR="\033[34;1m"
 SRCCOLOR="\033[33m"
@@ -283,6 +289,8 @@ endif
 REDIS_SERVER_NAME=redis-server$(PROG_SUFFIX)
 REDIS_SENTINEL_NAME=redis-sentinel$(PROG_SUFFIX)
 REDIS_SERVER_OBJ=adlist.o quicklist.o ae.o anet.o dict.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o cluster.o crc16.o endianconv.o slowlog.o scripting.o bio.o rio.o rand.o memtest.o crcspeed.o crc64.o bitops.o sentinel.o notify.o setproctitle.o blocked.o hyperloglog.o latency.o sparkline.o redis-check-rdb.o redis-check-aof.o geo.o lazyfree.o module.o evict.o expire.o geohash.o geohash_helper.o childinfo.o defrag.o siphash.o rax.o t_stream.o listpack.o localtime.o lolwut.o lolwut5.o lolwut6.o acl.o tracking.o connection.o tls.o sha256.o timeout.o setcpuaffinity.o monotonic.o mt19937-64.o
+LUKE_TEST_NAME=luke-test$(PROG_SUFFIX)
+LUKE_TEST_OBJ=luke_test.o dict.o sds.o zmalloc.o mt19937-64.o siphash.o redisassert.o adlist.o
 REDIS_CLI_NAME=redis-cli$(PROG_SUFFIX)
 REDIS_CLI_OBJ=anet.o adlist.o dict.o redis-cli.o zmalloc.o release.o ae.o redisassert.o crcspeed.o crc64.o siphash.o crc16.o monotonic.o cli_common.o mt19937-64.o
 REDIS_BENCHMARK_NAME=redis-benchmark$(PROG_SUFFIX)
@@ -290,6 +298,7 @@ REDIS_BENCHMARK_OBJ=ae.o anet.o redis-benchmark.o adlist.o dict.o zmalloc.o redi
 REDIS_CHECK_RDB_NAME=redis-check-rdb$(PROG_SUFFIX)
 REDIS_CHECK_AOF_NAME=redis-check-aof$(PROG_SUFFIX)
 
+# all: $(LUKE_TEST_NAME)
 all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_RDB_NAME) $(REDIS_CHECK_AOF_NAME)
 	@echo ""
 	@echo "Hint: It's a good idea to run 'make test' ;)"
@@ -334,8 +343,14 @@ ifneq ($(strip $(PREV_FINAL_LDFLAGS)), $(strip $(FINAL_LDFLAGS)))
 .make-prerequisites: persist-settings
 endif
 
+$(info FINAL_LIBS=$(FINAL_LIBS))
+
 # redis-server
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
+	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS)
+
+# luke-test
+$(LUKE_TEST_NAME): $(LUKE_TEST_OBJ)
 	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS)
 
 # redis-sentinel

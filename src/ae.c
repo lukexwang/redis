@@ -242,8 +242,9 @@ int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
 
 /* How many microseconds until the first timer should fire.
  * If there are no timers, -1 is returned.
+ * 第一个 计时器 触发前的微秒数. 如果没有计时器,则返回-1.
  *
- * Note that's O(N) since time events are unsorted.
+ * Note that's O(N) since time events are unsorted. 时间事件没排序,所以该函数时间复杂度是 O(N)
  * Possible optimizations (not needed by Redis so far, but...):
  * 1) Insert the event in order, so that the nearest is just the head.
  *    Much better but still insertion or deletion of timers is O(N).
@@ -335,6 +336,7 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  * (that may be registered by time event callbacks just processed).
  * Without special flags the function sleeps until some file event
  * fires, or when the next time event occurs (if any).
+ * 处理每个待办的时间事件,而后是每个代办的文件事件.如果没有特殊的flags,该函数sleep直到部分文件事件达到 or 时间事件发生.
  *
  * If flags is 0, the function does nothing and returns.
  * if flags has AE_ALL_EVENTS set, all the kind of events are processed.
@@ -344,6 +346,13 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  * the events that can be handled without a wait are processed.
  * if flags has AE_CALL_AFTER_SLEEP set, the aftersleep callback is called.
  * if flags has AE_CALL_BEFORE_SLEEP set, the beforesleep callback is called.
+ * 如果flags=0, 函数什么也不做,直接返回;
+ * 如果flags 有 AE_ALL_EVENTS 标识,所有类型的事件都会被处理;
+ * 如果flags 有 AE_FILE_EVENTS 标识,文件类型事件被处理;
+ * 如果flags 有 AE_TIME_EVENTS 标识,时间类型事件被处理;
+ * 如果flags 有 AE_DONT_WAIT 标识,该函数在事件处理完成后,不会继续等待,会尽快返回;
+ * 如果flags 有 AE_CALL_AFTER_SLEEP 标识,执行aftersleep回调;
+ * 如果flags 有 AE_CALL_BEFORE_SLEEP 标识,执行beforesleep回调;
  *
  * The function returns the number of events processed. */
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
@@ -357,6 +366,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
      * file events to process as long as we want to process time
      * events, in order to sleep until the next time event is ready
      * to fire. */
+    // 尽管没有待处理的文件事件,只要我们想处理时间事件,我们都需要调用 select(). 目的是下次时间事件触发前休眠.
     if (eventLoop->maxfd != -1 ||
         ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
         int j;
@@ -364,6 +374,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         int64_t usUntilTimer = -1;
 
         if (flags & AE_TIME_EVENTS && !(flags & AE_DONT_WAIT))
+            // 第一个 计时器 触发前的微秒数. 如果没有计时器,则返回-1.
             usUntilTimer = usUntilEarliestTimer(eventLoop);
 
         if (usUntilTimer >= 0) {
@@ -393,6 +404,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
         /* Call the multiplexing API, will return only on timeout or when
          * some event fires. */
+        // 调用多路复用 API，仅在超时或某些事件触发时返回
         numevents = aeApiPoll(eventLoop, tvp);
 
         /* After sleep callback. */
@@ -415,7 +427,13 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * after the readable. In such a case, we invert the calls.
              * This is useful when, for instance, we want to do things
              * in the beforeSleep() hook, like fsyncing a file to disk,
-             * before replying to a client. */
+             * before replying to a client. 
+             * 正常情况下,我们首先执行 readable event,而后执行  writable event.
+             * 这是先处理 用户请求, 而后返回用户回复 正常逻辑.
+             * 
+             * 然而如果mask中设置上AE_BARRIER标记, 则我们的客户端要求我们做相反的事情: 永远不要在readble之后 出发 writeable事件.
+             * 这种情况下，我们反转调用. 例如: 当我们想要在beforeSleep()钩子中做一些事情时，这很有用，比如在回复客户端之前将文件同步到磁盘.
+             */
             int invert = fe->mask & AE_BARRIER;
 
             /* Note the "fe->mask & mask & ..." code: maybe an already

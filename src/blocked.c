@@ -85,7 +85,11 @@ typedef struct bkinfo {
 
 /* Block a client for the specific operation type. Once the CLIENT_BLOCKED
  * flag is set client query buffer is not longer processed, but accumulated,
- * and will be processed when the client is unblocked. */
+ * and will be processed when the client is unblocked.
+ * 指定操作类型 block client,一旦设置上 CLIENT_BLOCKED,client buffer不再被处理(不过会一直接收).
+ * 当client unblocked后，client buffer 才会被处理
+ * 同时client 加入到奥 server.paused_clients链表中, c->flags 添加 CLIENT_PENDING_COMMAND 标记;
+ */
 void blockClient(client *c, int btype) {
     c->flags |= CLIENT_BLOCKED;
     c->btype = btype;
@@ -116,6 +120,7 @@ void updateStatsOnUnblock(client *c, long blocked_us, long reply_us){
 /* This function is called in the beforeSleep() function of the event loop
  * in order to process the pending input buffer of clients that were
  * unblocked after a blocking operation. */
+//每次事件循环 该函数被 beforeSleep()调用, 以便处理那些刚unblocked clients的input buffer中的请求
 void processUnblockedClients(void) {
     listNode *ln;
     client *c;
@@ -160,6 +165,12 @@ void processUnblockedClients(void) {
  * 4. With this function instead we can put the client in a queue that will
  *    process it for queries ready to be executed at a safe time.
  */
+//这个函数会调度client去被重新处理 
+//
+// 1. 当一个client被block, 其文件描述符的可读事件依然会被处理;
+// 2. 可读事件数据依然会被读取到 queryBuf中,不过这些数据不会被解析 or 处理;
+// 3. 当这些client unblock后,如果没有这个函数,client的queryBuf必须写一点东西，才能再次激活 client文件描述符的可读,以便最终调用 processQueryBuffer*()去处理;
+// 4. 通过这个函数,我们将client 放到 unblocked_clients 队列中,那么这些client的请求就会被在合适的时间去执行(无需向queryBuf写东西);
 void queueClientForReprocessing(client *c) {
     /* The client may already be into the unblocked list because of a previous
      * blocking operation, don't add back it into the list multiple times. */
@@ -171,17 +182,22 @@ void queueClientForReprocessing(client *c) {
 
 /* Unblock a client calling the right function depending on the kind
  * of operation the client is blocking for. */
+//Unblock 一个client,具体操作行为取决于 client因为什么而被blockk
 void unblockClient(client *c) {
     if (c->btype == BLOCKED_LIST ||
         c->btype == BLOCKED_ZSET ||
         c->btype == BLOCKED_STREAM) {
+        //list: blpop brpop命令
+        //zset: bzpopmin bzpopmax命令
         unblockClientWaitingData(c);
     } else if (c->btype == BLOCKED_WAIT) {
+        // wait命令
         unblockClientWaitingReplicas(c);
     } else if (c->btype == BLOCKED_MODULE) {
         if (moduleClientIsBlockedOnKeys(c)) unblockClientWaitingData(c);
         unblockClientFromModule(c);
     } else if (c->btype == BLOCKED_PAUSE) {
+        //比如failover 执行slave提主时,需要server pause 所有client
         listDelNode(server.paused_clients,c->paused_list_node);
         c->paused_list_node = NULL;
     } else {
@@ -192,6 +208,7 @@ void unblockClient(client *c) {
      * we do not do it immediately after the command returns (when the
      * client got blocked) in order to be still able to access the argument
      * vector from module callbacks and updateStatsOnUnblock. */
+    //重置client的query buf
     if (c->btype != BLOCKED_PAUSE) {
         freeClientOriginalArgv(c);
         resetClient(c);
@@ -230,7 +247,12 @@ void replyToBlockedClientTimedOut(client *c) {
  * is called when a master turns into a slave.
  *
  * The semantics is to send an -UNBLOCKED error to the client, disconnecting
- * it at the same time. */
+ * it at the same time. 
+ * 批量 unblock clients,因为redis实例中某些修改已经让blocking不再安全.
+ * 例如: 主机从master变成slave, 在list上操作执行block操作 的clients 已经不安全, 所以该函数在master变成slave时会被调用
+ * 
+ * 返回 -UNBLOCKED 错误
+ */
 void disconnectAllBlockedClients(void) {
     listNode *ln;
     listIter li;
@@ -524,6 +546,8 @@ void serveClientsBlockedOnKeyByModule(readyList *rl) {
  * a MULTI/EXEC block, or a Lua script, terminated its execution after
  * being called by a client. It handles serving clients blocked in
  * lists, streams, and sorted sets, via a blocking commands.
+ * 每当一个client完成单个命令、MULTI/EXEC块、Lua脚本时，Redis都应该执行此函数.
+ * 该函数将处理 因为 lists、streams、sorted sets等的阻塞命令(blocking commands) 而被阻塞住的clients.
  *
  * All the keys with at least one client blocked that received at least
  * one new element via some write operation are accumulated into
@@ -531,6 +555,8 @@ void serveClientsBlockedOnKeyByModule(readyList *rl) {
  * serve clients accordingly. Note that the function will iterate again and
  * again as a result of serving BLMOVE we can have new blocking clients
  * to serve because of the PUSH side of BLMOVE.
+ * 至少一个client被block的所有keys, 通过写操作接收到至少一个新元素, 这些key都会被累积到 server.ready_keys列表中.
+ * 该函数将遍历server.ready_keys列表 并 为clients服务. 注意: 由于为BLMOVE提供服务, 该函数将一次次迭代?
  *
  * This function is normally "fair", that is, it will server clients
  * using a FIFO behavior. However this fairness is violated in certain
@@ -541,6 +567,7 @@ void serveClientsBlockedOnKeyByModule(readyList *rl) {
  * other side of the linked list. However as long as the key starts to
  * be used only for a single type, like virtually any Redis application will
  * do, the function is already fair. */
+//如果client因使用blpop、blpush、bzpopmin等命令阻塞(blocked),该函数将处理
 void handleClientsBlockedOnKeys(void) {
     while(listLength(server.ready_keys) != 0) {
         list *l;
